@@ -1,13 +1,3 @@
-/*
-+------------------------------------------------------------------------------+
-|                                                                              |
-|                                 Hugo Ledoux                                  |
-|                             h.ledoux@tudelft.nl                              |
-|                                  2024-02-21                                  |
-|                                                                              |
-+------------------------------------------------------------------------------+
-*/
-
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -20,14 +10,15 @@ using json = nlohmann::json;
 
 
 int   get_no_roof_surfaces(json &j);
-void  list_all_vertices(json& j);
+int   get_no_ground_surfaces(json &j);
+void  list_all_vertices(json &j);
 void  visit_roofsurfaces(json &j);
-
+std::vector<std::vector<int>> get_ground_surface_vertices(json &j);
 
 
 int main(int argc, const char * argv[]) {
   //-- will read the file passed as argument or twobuildings.city.json if nothing is passed
-  const char* filename = (argc > 1) ? argv[1] : "../../data/twobuildings.city.json";
+  const char* filename = (argc > 1) ? argv[1] : "../data/twobuildings.city.json";
   std::cout << "Processing: " << filename << std::endl;
   std::ifstream input(filename);
   json j;
@@ -38,7 +29,21 @@ int main(int argc, const char * argv[]) {
   int noroofsurfaces = get_no_roof_surfaces(j);
   std::cout << "Total RoofSurface: " << noroofsurfaces << std::endl;
 
-  list_all_vertices(j);
+  int nogroundsurfaces = get_no_ground_surfaces(j);
+  std::cout << "Total GroundSurface: " << nogroundsurfaces << std::endl;
+
+    std::vector<std::vector<int>> groundVertices = get_ground_surface_vertices(j);
+
+  for (std::vector<int> &groundSurface : groundVertices) {
+      std::cout << "GroundSurface: ";
+      for (int &vertex : groundSurface) {
+          std::cout << vertex << " ";
+      }
+      std::cout << std::endl;
+  }
+
+  std::cout << std::endl;
+  //list_all_vertices(j);
 
   visit_roofsurfaces(j);
 
@@ -134,4 +139,46 @@ void list_all_vertices(json& j) {
       }
     }
   }
+}
+
+int get_no_ground_surfaces(json &j) {
+    int total = 0;
+    for (auto& co : j["CityObjects"].items()) {
+        for (auto& g : co.value()["geometry"]) {
+            if (g["type"] == "Solid") {
+                for (auto& shell : g["semantics"]["values"]) {
+                    for (auto& s : shell) {
+                        if (g["semantics"]["surfaces"][s.get<int>()]["type"].get<std::string>().compare("GroundSurface") == 0) {
+                            total += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return total;
+}
+
+std::vector<std::vector<int>> get_ground_surface_vertices(json &j) {
+    std::vector<std::vector<int>> groundSurfaceVertices;
+
+    for (auto& co : j["CityObjects"].items()) {
+        for (auto& g : co.value()["geometry"]) {
+            if (g["type"] == "Solid") {
+                for (int i = 0; i < g["boundaries"].size(); i++) {
+                    for (int j = 0; j < g["boundaries"][i].size(); j++) {
+                        int sem_index = g["semantics"]["values"][i][j];
+                        if (g["semantics"]["surfaces"][sem_index]["type"].get<std::string>().compare("GroundSurface") == 0) {
+                            std::vector<int> surfaceVertices;
+                            for (int vertex : g["boundaries"][i][j][0]) {
+                                surfaceVertices.push_back(vertex);
+                            }
+                            groundSurfaceVertices.push_back(surfaceVertices);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return groundSurfaceVertices;
 }
