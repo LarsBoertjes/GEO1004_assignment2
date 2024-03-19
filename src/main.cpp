@@ -27,7 +27,7 @@ typedef Kernel::Vector_3 Vector3;
 
 int main(int argc, const char * argv[]) {
   //-- will read the file passed as argument or twobuildings.city.json if nothing is passed
-  const char* filename = (argc > 1) ? argv[1] : "../data/twobuildings.city.json";
+  const char* filename = (argc > 1) ? argv[1] : "../data/specialcase_3.city.json";
   std::cout << "Processing: " << filename << std::endl;
   std::ifstream input(filename);
   json j;
@@ -35,74 +35,83 @@ int main(int argc, const char * argv[]) {
   input.close();
 
   for (auto& co : j["CityObjects"].items()) {
+      std::vector<std::pair<std::vector<int>, double>> potentialSurfaces;
       std::vector<std::vector<int>> groundSurfaceBoundaries;
       std::vector<std::vector<int>> roofSurfaceBoundaries;
 
+      std::cout << co.key() << std::endl;
+
       for (auto& geom : co.value()["geometry"]) {
           if (geom.contains("boundaries")) {
-              for (auto& shell : geom["boundaries"]) {
-                  for (auto& surface : shell) {
+              for (auto &shell: geom["boundaries"]) {
+                  for (auto &surface: shell) {
                       std::vector<Point3> vertex_coord;
-                      for (auto& boundary : surface) {
-                          for (auto& v : boundary) {
+                      std::vector<int> boundary_indices;
+                      double totalHeight = 0;
+
+                      for (auto &boundary: surface) {
+                          for (auto &v: boundary) {
                               std::vector<int> vi = j["vertices"][v.get<int>()];
-                              double x = (vi[0] * j["transform"]["scale"][0].get<double>()) + j["transform"]["translate"][0].get<double>();
-                              double y = (vi[1] * j["transform"]["scale"][1].get<double>()) + j["transform"]["translate"][1].get<double>();
-                              double z = (vi[2] * j["transform"]["scale"][2].get<double>()) + j["transform"]["translate"][2].get<double>();
+                              double x = (vi[0] * j["transform"]["scale"][0].get<double>()) +
+                                         j["transform"]["translate"][0].get<double>();
+                              double y = (vi[1] * j["transform"]["scale"][1].get<double>()) +
+                                         j["transform"]["translate"][1].get<double>();
+                              double z = (vi[2] * j["transform"]["scale"][2].get<double>()) +
+                                         j["transform"]["translate"][2].get<double>();
                               vertex_coord.emplace_back(x, y, z);
+                              boundary_indices.push_back(v.get<int>());
+                              totalHeight += z;
                           }
                       }
 
                       Plane3 plane;
-                      CGAL::linear_least_squares_fitting_3(vertex_coord.begin(), vertex_coord.end(), plane, CGAL::Dimension_tag<0>());
+                      CGAL::linear_least_squares_fitting_3(vertex_coord.begin(), vertex_coord.end(), plane,
+                                                           CGAL::Dimension_tag<0>());
 
                       Vector3 normal = plane.orthogonal_vector();
-                      // Normalizing the vector for convenience?
-                      //normal = normal / std::sqrt(normal.squared_length());
+                      normal = normal / std::sqrt(normal.squared_length());
 
-                      std::cout << std::setprecision(2) << std::fixed << "Normal Vector: (" << normal.x() << ", " << normal.y() << ", " << normal.z() << ")" << std::endl;
-                  }
-              }
-          }
-      }
-      std::cout << "------------------------------------------------------" << std::endl;
-  }
-
-  for (auto& co : j["CityObjects"].items()) {
-      if (co.value().contains("geometry") && !co.value()["geometry"].empty()) {
-          std::vector<std::vector<int>> groundSurfaceVertices;
-          for (auto& geom : co.value()["geometry"]) {
-              if (geom["type"] == "Solid" || geom["type"] == "MultiSurface") {
-                  if (geom.contains("semantics") && geom["semantics"].contains("values")) {
-                      for (size_t surfaceIndex = 0; surfaceIndex < geom["semantics"]["values"].size(); ++surfaceIndex) {
-                          for (size_t ringIndex = 0; ringIndex < geom["semantics"]["values"][surfaceIndex].size(); ++ringIndex) {
-                              int sem_index = geom["semantics"]["values"][surfaceIndex][ringIndex];
-                              if (geom["semantics"]["surfaces"][sem_index]["type"] == "GroundSurface") {
-                                  std::vector<int> surfaceVertices;
-                                  for (auto& index : geom["boundaries"][surfaceIndex][ringIndex][0]) {
-                                      surfaceVertices.push_back(index);
-                                  }
-                                  groundSurfaceVertices.push_back(surfaceVertices);
-                              }
-                          }
+                      if (normal.z() > 0.25 || normal.z() < -0.25) {
+                          double averageHeight = totalHeight / vertex_coord.size();
+                          potentialSurfaces.emplace_back(boundary_indices, averageHeight);
                       }
                   }
               }
-          }
-          // Create a new MultiSurface geometry if there are ground surfaces
-          if (!groundSurfaceVertices.empty()) {
-              json newGeometry = {
-                      {"type", "MultiSurface"},
-                      {"lod", "0.2"},
-                      {"boundaries", groundSurfaceVertices}
-              };
-              // Append the new geometry to the CityObject's geometry list
-              co.value()["geometry"].push_back(newGeometry);
+              if (!potentialSurfaces.empty()) {
+                  std::sort(potentialSurfaces.begin(), potentialSurfaces.end(), [](const auto& a, const auto& b) {
+                      return a.second < b.second;
+                  });
+
+                  // the first element is the ground surface
+                  groundSurfaceBoundaries.push_back(potentialSurfaces.front().first);
+
+                  // the rest are roof surfaces
+                  for (size_t i = 1; i < potentialSurfaces.size(); ++i) {
+                      roofSurfaceBoundaries.push_back(potentialSurfaces[i].first);
+                  }
+              }
           }
       }
+
+      for (auto& boundary : groundSurfaceBoundaries) {
+          std::cout << "GroundSurface: ";
+          for (int vertex : boundary) {
+              std::cout << vertex << " ";
+          }
+          std::cout << std::endl;
+      }
+
+      for (auto& boundary : roofSurfaceBoundaries) {
+          std::cout << "RoofSurface: ";
+          for (int vertex : boundary) {
+              std::cout << vertex << " ";
+          }
+          std::cout << std::endl;
+      }
+
   }
 
-
+  visit_roofsurfaces(j);
 
   //-- write to disk the modified city model (out.city.json)
   std::ofstream o("out.city.json");
