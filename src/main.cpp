@@ -1,19 +1,28 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <iomanip>
 
 //-- https://github.com/nlohmann/json
 //-- used to read and write (City)JSON
 #include "json.hpp" //-- it is in the /include/ folder
+
+// CGAL libraries
+#include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
+#include <CGAL/linear_least_squares_fitting_3.h>
 
 using json = nlohmann::json;
 
 
 int   get_no_roof_surfaces(json &j);
 int   get_no_ground_surfaces(json &j);
-void  list_all_vertices(json &j);
 void  visit_roofsurfaces(json &j);
-std::vector<std::vector<int>> get_ground_surface_vertices(json &j);
+void  list_all_vertices(json &j);
+
+typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel;
+typedef Kernel::Point_3 Point3;
+typedef Kernel::Plane_3 Plane3;
+typedef Kernel::Vector_3 Vector3;
 
 
 int main(int argc, const char * argv[]) {
@@ -25,51 +34,81 @@ int main(int argc, const char * argv[]) {
   input >> j; //-- store the content of the file in a nlohmann::json object
   input.close();
 
-  //-- get total number of RoofSurface in the file
-  int noroofsurfaces = get_no_roof_surfaces(j);
-  std::cout << "Total RoofSurface: " << noroofsurfaces << std::endl;
+  for (auto& co : j["CityObjects"].items()) {
+      std::vector<std::vector<int>> groundSurfaceBoundaries;
+      std::vector<std::vector<int>> roofSurfaceBoundaries;
 
-  int nogroundsurfaces = get_no_ground_surfaces(j);
-  std::cout << "Total GroundSurface: " << nogroundsurfaces << std::endl;
+      for (auto& geom : co.value()["geometry"]) {
+          if (geom.contains("boundaries")) {
+              for (auto& shell : geom["boundaries"]) {
+                  for (auto& surface : shell) {
+                      std::vector<Point3> vertex_coord;
+                      for (auto& boundary : surface) {
+                          for (auto& v : boundary) {
+                              std::vector<int> vi = j["vertices"][v.get<int>()];
+                              double x = (vi[0] * j["transform"]["scale"][0].get<double>()) + j["transform"]["translate"][0].get<double>();
+                              double y = (vi[1] * j["transform"]["scale"][1].get<double>()) + j["transform"]["translate"][1].get<double>();
+                              double z = (vi[2] * j["transform"]["scale"][2].get<double>()) + j["transform"]["translate"][2].get<double>();
+                              vertex_coord.emplace_back(x, y, z);
+                          }
+                      }
 
-    std::vector<std::vector<int>> groundVertices = get_ground_surface_vertices(j);
+                      Plane3 plane;
+                      CGAL::linear_least_squares_fitting_3(vertex_coord.begin(), vertex_coord.end(), plane, CGAL::Dimension_tag<0>());
 
-  for (std::vector<int> &groundSurface : groundVertices) {
-      std::cout << "GroundSurface: ";
-      for (int &vertex : groundSurface) {
-          std::cout << vertex << " ";
+                      Vector3 normal = plane.orthogonal_vector();
+                      // Normalizing the vector for convenience?
+                      //normal = normal / std::sqrt(normal.squared_length());
+
+                      std::cout << std::setprecision(2) << std::fixed << "Normal Vector: (" << normal.x() << ", " << normal.y() << ", " << normal.z() << ")" << std::endl;
+                  }
+              }
+          }
       }
-      std::cout << std::endl;
+      std::cout << "------------------------------------------------------" << std::endl;
   }
 
-  std::cout << std::endl;
-  //list_all_vertices(j);
-
-  visit_roofsurfaces(j);
-
-  //-- print out the number of Buildings in the file
-  int nobuildings = 0;
-  for (auto& co : j["CityObjects"]) {
-    if (co["type"] == "Building") {
-      nobuildings += 1;
-    }
+  for (auto& co : j["CityObjects"].items()) {
+      if (co.value().contains("geometry") && !co.value()["geometry"].empty()) {
+          std::vector<std::vector<int>> groundSurfaceVertices;
+          for (auto& geom : co.value()["geometry"]) {
+              if (geom["type"] == "Solid" || geom["type"] == "MultiSurface") {
+                  if (geom.contains("semantics") && geom["semantics"].contains("values")) {
+                      for (size_t surfaceIndex = 0; surfaceIndex < geom["semantics"]["values"].size(); ++surfaceIndex) {
+                          for (size_t ringIndex = 0; ringIndex < geom["semantics"]["values"][surfaceIndex].size(); ++ringIndex) {
+                              int sem_index = geom["semantics"]["values"][surfaceIndex][ringIndex];
+                              if (geom["semantics"]["surfaces"][sem_index]["type"] == "GroundSurface") {
+                                  std::vector<int> surfaceVertices;
+                                  for (auto& index : geom["boundaries"][surfaceIndex][ringIndex][0]) {
+                                      surfaceVertices.push_back(index);
+                                  }
+                                  groundSurfaceVertices.push_back(surfaceVertices);
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+          // Create a new MultiSurface geometry if there are ground surfaces
+          if (!groundSurfaceVertices.empty()) {
+              json newGeometry = {
+                      {"type", "MultiSurface"},
+                      {"lod", "0.2"},
+                      {"boundaries", groundSurfaceVertices}
+              };
+              // Append the new geometry to the CityObject's geometry list
+              co.value()["geometry"].push_back(newGeometry);
+          }
+      }
   }
-  std::cout << "There are " << nobuildings << " Buildings in the file" << std::endl;
 
-  //-- print out the number of vertices in the file
-  std::cout << "Number of vertices " << j["vertices"].size() << std::endl;
 
-  //-- add an attribute "volume"
-  for (auto& co : j["CityObjects"]) {
-    if (co["type"] == "Building") {
-      co["attributes"]["volume"] = rand();
-    }
-  }
 
   //-- write to disk the modified city model (out.city.json)
   std::ofstream o("out.city.json");
-  o << j.dump(2) << std::endl;
+  o << j.dump(5) << std::endl;
   o.close();
+
 
   return 0;
 }
@@ -159,26 +198,3 @@ int get_no_ground_surfaces(json &j) {
     return total;
 }
 
-std::vector<std::vector<int>> get_ground_surface_vertices(json &j) {
-    std::vector<std::vector<int>> groundSurfaceVertices;
-
-    for (auto& co : j["CityObjects"].items()) {
-        for (auto& g : co.value()["geometry"]) {
-            if (g["type"] == "Solid") {
-                for (int i = 0; i < g["boundaries"].size(); i++) {
-                    for (int j = 0; j < g["boundaries"][i].size(); j++) {
-                        int sem_index = g["semantics"]["values"][i][j];
-                        if (g["semantics"]["surfaces"][sem_index]["type"].get<std::string>().compare("GroundSurface") == 0) {
-                            std::vector<int> surfaceVertices;
-                            for (int vertex : g["boundaries"][i][j][0]) {
-                                surfaceVertices.push_back(vertex);
-                            }
-                            groundSurfaceVertices.push_back(surfaceVertices);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    return groundSurfaceVertices;
-}

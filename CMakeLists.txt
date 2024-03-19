@@ -26,6 +26,6 @@ find_package(Eigen3 3.4.0 QUIET)
 include(CGAL_Eigen3_support)
 
 FILE(GLOB SRC_FILES src/*.cpp)
-add_executable(GEO1004_ass_2 ${SRC_FILES})             # changed this into my project
+add_executable(GEO1004_ass_2 ${SRC_FILES})
 
 target_link_libraries(${PROJECT_NAME} CGAL::CGAL CGAL::Eigen3_support)
