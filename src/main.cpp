@@ -118,14 +118,14 @@ int main(int argc, const char * argv[]) {
         json correctedBoundaries = json::array();
 
         for (const auto& boundary : groundSurfaceBoundaries) {
-            correctedBoundaries.push_back(json::array({json::array({boundary})}));
+            correctedBoundaries.push_back(json::array({boundary}));
         }
 
         // add groundSurfaces as new Geometry
         json newGeometry = {
-                {"boundaries", correctedBoundaries},
+                {"type", "MultiSurface"},
                 {"lod", "0.2"},
-                {"type", "MultiSurface"}
+                {"boundaries", correctedBoundaries}
         };
 
         co.value()["geometry"].push_back(newGeometry);
