@@ -17,6 +17,7 @@ using json = nlohmann::json;
 int   get_no_roof_surfaces(json &j);
 int   get_no_ground_surfaces(json &j);
 void  visit_roofsurfaces(json &j);
+void  visit_groundsurfaces(json &j)
 void  list_all_vertices(json &j);
 
 typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel;
@@ -27,7 +28,7 @@ typedef Kernel::Vector_3 Vector3;
 
 int main(int argc, const char * argv[]) {
     //-- will read the file passed as argument or twobuildings.city.json if nothing is passed
-    const char* filename = (argc > 1) ? argv[1] : "../data/specialcase_3.city.json";
+    const char* filename = (argc > 1) ? argv[1] : "../data/specialcase_2.city.json";
     std::cout << "Processing: " << filename << std::endl;
     std::ifstream input(filename);
     json j;
@@ -134,6 +135,8 @@ int main(int argc, const char * argv[]) {
 
     visit_roofsurfaces(j);
 
+    visit_groundsurfaces(j);
+
     //-- write to disk the modified city model (out.city.json)
     std::ofstream o("out.city.json");
     o << j.dump(5) << std::endl;
@@ -155,6 +158,24 @@ void visit_roofsurfaces(json &j) {
                         int sem_index = g["semantics"]["values"][i][j];
                         if (g["semantics"]["surfaces"][sem_index]["type"].get<std::string>().compare("RoofSurface") == 0) {
                             std::cout << "RoofSurface: " << g["boundaries"][i][j] << std::endl;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+void visit_groundsurfaces(json &j) {
+    for (auto& co : j["CityObjects"].items()) {
+        for (auto& g : co.value()["geometry"]) {
+            if (g["type"] == "Solid") {
+                for (int i = 0; i < g["boundaries"].size(); i++) {
+                    for (int j = 0; j < g["boundaries"][i].size(); j++) {
+                        int sem_index = g["semantics"]["values"][i][j];
+                        if (g["semantics"]["surfaces"][sem_index]["type"].get<std::string>().compare("GroundSurface") == 0) {
+                            std::cout << "GroundSurface: " << g["boundaries"][i][j] << std::endl;
                         }
                     }
                 }
