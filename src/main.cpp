@@ -17,7 +17,7 @@ using json = nlohmann::json;
 int   get_no_roof_surfaces(json &j);
 int   get_no_ground_surfaces(json &j);
 void  visit_roofsurfaces(json &j);
-void  visit_groundsurfaces(json &j)
+void  visit_groundsurfaces(json &j);
 void  list_all_vertices(json &j);
 
 typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel;
