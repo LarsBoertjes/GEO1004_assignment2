@@ -6,3 +6,4 @@ data/twobuildingsformatted.city.json
 /val3dity-win64
 src/origin.cpp
 *.json
+src/draft.cpp
