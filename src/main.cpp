@@ -89,7 +89,6 @@ int main(int argc, const char * argv[]) {
                     // iterate over surfaces
                     // find out if it is potentially roof or ground
 
-
                     for (int i = 0; i < shell.size(); ++i) {
                         double overallMinZ = std::numeric_limits<double>::infinity();
                         double overallMaxZ = -std::numeric_limits<double>::infinity();
@@ -165,6 +164,8 @@ int main(int argc, const char * argv[]) {
             }
         }
 
+
+        // write lod 0.2 to file
         json MultiSurfaceLOD02 = {
                 {"type", "MultiSurface"},
                 {"lod", "0.2"},
@@ -173,11 +174,6 @@ int main(int argc, const char * argv[]) {
 
         co.value()["geometry"].push_back(MultiSurfaceLOD02);
 
-        std::cout << surfaceAreasRoofSurfaces.size() << std::endl;
-
-        for (int i = 0; i < surfaceAreasRoofSurfaces.size(); ++i) {
-            std::cout << surfaceAreasRoofSurfaces[i] << " " << maxZRoofSurfaces[i] << " " << minZRoofSurfaces[i] << std::endl;
-        }
 
         // remove groundSurfaces from area, minZ, maxZ vectors
         int n = groundSurfaceBoundaries.size();
@@ -190,7 +186,7 @@ int main(int argc, const char * argv[]) {
 
         std::sort(indices.begin(), indices.begin() + n, std::greater<>()); // Sort the first n indices in descending order for safe removal
 
-        // Step 2: Remove elements from vectors using the identified indices
+        // remove elements from vectors using the identified indices
         for (int i = 0; i < n; ++i) {
             int idxToRemove = indices[i];
             // Remove elements from the vectors
@@ -199,9 +195,6 @@ int main(int argc, const char * argv[]) {
             minZRoofSurfaces.erase(minZRoofSurfaces.begin() + idxToRemove);
         }
 
-        for (int i = 0; i < surfaceAreasRoofSurfaces.size(); ++i) {
-            std::cout << surfaceAreasRoofSurfaces[i] << " " << maxZRoofSurfaces[i] << " " << minZRoofSurfaces[i] << std::endl;
-        }
 
         double ridge = calculateRidge(surfaceAreasRoofSurfaces, maxZRoofSurfaces);
         double eave = calculateEave(surfaceAreasRoofSurfaces, minZRoofSurfaces);
@@ -328,8 +321,6 @@ int get_no_ground_surfaces(json &j) {
 }
 
 double findSurfaceArea(json j, json &surface, Plane3 bestplane) {
-    std::cout << surface << std::endl;
-
     Triangulation triangulation;
 
     std::vector<double> areas;
@@ -349,17 +340,12 @@ double findSurfaceArea(json j, json &surface, Plane3 bestplane) {
         }
 
         if (arePointsCollinear(facePoints2D)) {
-            std::cout << "The points are collinear" << std::endl;
             return 0.0;
-        } else {
-            std::cout << "The points are not collinear" << std::endl;
         }
-
 
         for (const Point2& pt : facePoints2D) {
             triangulation.insert(pt);
         }
-
 
         if (!facePoints2D.empty()) {
             facePoints2D.push_back(facePoints2D[0]);
