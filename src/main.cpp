@@ -16,6 +16,7 @@
 #include <CGAL/Triangulation_vertex_base_2.h>
 #include <CGAL/Triangulation_face_base_with_info_2.h>
 #include <CGAL/Constrained_Delaunay_triangulation_2.h>
+#include <CGAL/Polygon_2.h>
 typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel;
 typedef CGAL::Exact_predicates_tag Tag;
 struct FaceInfo {
@@ -36,24 +37,10 @@ typedef Kernel::Point_3 Point3;
 typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel;
 typedef Kernel::Plane_3 Plane3;
 typedef Kernel::Vector_3 Vector3;
+typedef CGAL::Polygon_2<Kernel> Polygon_2;
 
 using json = nlohmann::json;
 
-struct Vertex {
-    double x, y, z;
-};
-
-struct Face {
-    std::list<int> boundary;
-    Kernel::Plane_3 best_plane;
-    Triangulation triangulation;
-};
-
-int   get_no_roof_surfaces(json &j);
-int   get_no_ground_surfaces(json &j);
-void  visit_roofsurfaces(json &j);
-void  visit_groundsurfaces(json &j);
-void  list_all_vertices(json &j);
 double findSurfaceArea(json j, json surface, Plane3 bestplane);
 bool arePointsCollinear(const std::vector<Point2>& points);
 double calculateRidge(std::vector<double> areas, std::vector<double> maxZvalues);
@@ -73,15 +60,16 @@ std::vector<std::vector<std::vector<int>>> flipOrientation(std::vector<std::vect
 
 int main(int argc, const char * argv[]) {
     //-- will read the file passed as argument or twobuildings.city.json if nothing is passed
-    const char* filename = (argc > 1) ? argv[1] : "../data/specialcase_2.city.json";
+    const char* filename = (argc > 1) ? argv[1] : "../data/tudcampus.city.json";
     std::cout << "Processing: " << filename << std::endl;
     std::ifstream input(filename);
     json j;
     input >> j; //-- store the content of the file in a nlohmann::json object
     input.close();
 
-    // iterate over all the cityobjects
+    // iterate over all the city objects
     for (auto& co : j["CityObjects"].items()) {
+        // initialize arrays for storing of surfaces
         std::vector<std::vector<std::vector<int>>> groundSurfaceBoundaries;
         std::vector<std::vector<std::vector<int>>> roofSurfaceBoundaries;
         std::vector<std::pair<std::vector<std::vector<int>>, double>> potentialSurfaces;
@@ -89,15 +77,14 @@ int main(int argc, const char * argv[]) {
         std::vector<double> maxZRoofSurfaces;
         std::vector<double> minZRoofSurfaces;
 
-        // iterating over list of surfaces
+        // iterating over boundaries
         for (auto &geom: co.value()["geometry"]) {
             if (geom.contains("boundaries")) {
 
                 // iterating over surfaces collection
                 for (auto &shell: geom["boundaries"]) {
-                    // iterate over surfaces
-                    // find out if it is potentially roof or ground
 
+                    // iterate over surfaces
                     for (int i = 0; i < shell.size(); ++i) {
                         double overallMinZ = std::numeric_limits<double>::infinity();
                         double overallMaxZ = -std::numeric_limits<double>::infinity();
@@ -105,8 +92,9 @@ int main(int argc, const char * argv[]) {
                         std::vector<Point3> vertex_coord;
                         double totalHeight = 0;
 
-                        for (auto vertex : shell[i][0]) {
-                            std::vector<int> vi = j["vertices"][vertex.get<int>()];
+                        // retrieve coordinates
+                        for (const auto& vertices : shell[i][0]) {
+                            std::vector<int> vi = j["vertices"][vertices.get<int>()];
                             double x = (vi[0] * j["transform"]["scale"][0].get<double>()) +
                                        j["transform"]["translate"][0].get<double>();
                             double y = (vi[1] * j["transform"]["scale"][1].get<double>()) +
@@ -118,11 +106,23 @@ int main(int argc, const char * argv[]) {
 
                             if (z < overallMinZ) overallMinZ = z;
                             if (z > overallMaxZ) overallMaxZ = z;
+
                         }
+
 
                         Plane3 plane;
                         CGAL::linear_least_squares_fitting_3(vertex_coord.begin(), vertex_coord.end(), plane,
                                                              CGAL::Dimension_tag<0>());
+
+                        Polygon_2 polygon;
+                        for (auto vertex : vertex_coord) {
+                            Point2 vertex_2d = plane.to_2d(vertex);
+                            polygon.push_back(vertex_2d);
+                        }
+
+                        if (!polygon.is_simple()) {
+                            std::cout << "this polygon is not simple " << std::endl;
+                        }
 
                         Vector3 normal = plane.orthogonal_vector();
                         normal = normal / std::sqrt(normal.squared_length());
@@ -131,9 +131,9 @@ int main(int argc, const char * argv[]) {
                         // if normal vector points upwards or downwards it is a potential roof/ground surface
                         if (normal.z() > 0.25 || normal.z() < -0.25) {
                             std::vector<std::vector<int>> surfaces;
-                            for (auto surface : shell[i]) {
+                            for (const auto& surface : shell[i]) {
                                 std::vector<int> exterior_interiors;
-                                for (auto intext : surface) {
+                                for (const auto& intext : surface) {
                                     exterior_interiors.push_back(intext);
                                 }
                                 surfaces.push_back(exterior_interiors);
@@ -193,13 +193,13 @@ int main(int argc, const char * argv[]) {
             minZRoofSurfaces.erase(minZRoofSurfaces.begin() + idxToRemove);
         }
 
-
+        // calculate ridge, eave and lod1.2 z-value
         double ridge = calculateRidge(surfaceAreasRoofSurfaces, maxZRoofSurfaces);
         double eave = calculateEave(surfaceAreasRoofSurfaces, minZRoofSurfaces);
-        double lod2z = ((ridge - eave) * 0.7) + eave;
+        double lod12z = ((ridge - eave) * 0.7) + eave;
 
         // Construct LoD1.2
-        std::vector<std::vector<std::vector<int>>> extrudedGroundSurfaceBoundaries = extrudeGroundSurface(j, groundSurfaceBoundaries, lod2z);
+        std::vector<std::vector<std::vector<int>>> extrudedGroundSurfaceBoundaries = extrudeGroundSurface(j, groundSurfaceBoundaries, lod12z);
 
         // Extract wallboundaries
         std::vector<std::vector<int>> wallBoundaries = constructWallBoundaries(groundSurfaceBoundaries, extrudedGroundSurfaceBoundaries);
