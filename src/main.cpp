@@ -54,10 +54,20 @@ int   get_no_ground_surfaces(json &j);
 void  visit_roofsurfaces(json &j);
 void  visit_groundsurfaces(json &j);
 void  list_all_vertices(json &j);
-double findSurfaceArea(json j, json &surface, Plane3 bestplane);
+double findSurfaceArea(json j, json surface, Plane3 bestplane);
 bool arePointsCollinear(const std::vector<Point2>& points);
 double calculateRidge(std::vector<double> areas, std::vector<double> maxZvalues);
 double calculateEave(std::vector<double> areas, std::vector<double> minZvalues);
+std::vector<std::vector<std::vector<int>>> extrudeGroundSurface(json& j,
+                                                                std::vector<std::vector<std::vector<int>>> groundSurface,
+                                                                double &newZ);
+std::vector<std::vector<int>> constructWallBoundaries(
+        const std::vector<std::vector<std::vector<int>>>& groundSurfaceBoundaries,
+        const std::vector<std::vector<std::vector<int>>>& extrudedGroundSurfaceBoundaries);
+std::vector<std::vector<std::vector<std::vector<int>>>> createSolid(
+        const std::vector<std::vector<std::vector<int>>>& groundSurfaceBoundaries,
+        const std::vector<std::vector<std::vector<int>>>& extrudedGroundSurfaceBoundaries,
+        const std::vector<std::vector<int>>& wallBoundaries);
 
 
 int main(int argc, const char * argv[]) {
@@ -81,8 +91,6 @@ int main(int argc, const char * argv[]) {
         // iterating over list of surfaces
         for (auto &geom: co.value()["geometry"]) {
             if (geom.contains("boundaries")) {
-
-
 
                 // iterating over surfaces collection
                 for (auto &shell: geom["boundaries"]) {
@@ -164,17 +172,6 @@ int main(int argc, const char * argv[]) {
             }
         }
 
-
-        // write lod 0.2 to file
-        json MultiSurfaceLOD02 = {
-                {"type", "MultiSurface"},
-                {"lod", "0.2"},
-                {"boundaries", groundSurfaceBoundaries}
-        };
-
-        co.value()["geometry"].push_back(MultiSurfaceLOD02);
-
-
         // remove groundSurfaces from area, minZ, maxZ vectors
         int n = groundSurfaceBoundaries.size();
 
@@ -200,14 +197,58 @@ int main(int argc, const char * argv[]) {
         double eave = calculateEave(surfaceAreasRoofSurfaces, minZRoofSurfaces);
         double lod2z = ((ridge - eave) * 0.7) + eave;
 
-        std::cout << "ridge: " << ridge << std::endl;
-        std::cout << "eave: " << eave << std::endl;
-        std::cout << "lod2z: " << lod2z << std::endl;
+        // Construct LoD1.2
+        std::vector<std::vector<std::vector<int>>> extrudedGroundSurfaceBoundaries = extrudeGroundSurface(j, groundSurfaceBoundaries, lod2z);
+
+        // Extract wallboundaries
+        std::vector<std::vector<int>> wallBoundaries = constructWallBoundaries(groundSurfaceBoundaries, extrudedGroundSurfaceBoundaries);
+
+        // reverse roof for better view results in CityJSON Ninja
+        std::vector<std::vector<std::vector<int>>> reversedRoof;
+
+        for (auto& surface : extrudedGroundSurfaceBoundaries) {
+            std::vector<std::vector<int>> reversedSurface;
+            for (auto loop : surface) {
+                std::reverse(loop.begin(), loop.end());
+                reversedSurface.push_back(loop); // Store the reversed loop
+            }
+            reversedRoof.push_back(reversedSurface); // Store the surface with reversed loops
+        }
+
+        // create Solid
+        auto solid = createSolid(groundSurfaceBoundaries, reversedRoof, wallBoundaries);
+
+        // write lod 1.2 to file
+        json SolidLOD12 = {
+                {"type", "Solid"},
+                {"lod", "1.2"},
+                {"boundaries", solid}
+        };
+
+        co.value()["geometry"].push_back(SolidLOD12);
+
+        // reverse ground as well for better view in CityJSON Ninja
+        std::vector<std::vector<std::vector<int>>> reversedGround;
+
+        for (auto& surface : groundSurfaceBoundaries) {
+            std::vector<std::vector<int>> reversedSurface;
+            for (auto loop : surface) {
+                std::reverse(loop.begin(), loop.end());
+                reversedSurface.push_back(loop); // Store the reversed loop
+            }
+            reversedGround.push_back(reversedSurface); // Store the surface with reversed loops
+        }
+
+        // write lod 0.2 to file
+        json MultiSurfaceLOD02 = {
+                {"type", "MultiSurface"},
+                {"lod", "0.2"},
+                {"boundaries", reversedGround}
+        };
+
+        co.value()["geometry"].push_back(MultiSurfaceLOD02);
 
     }
-
-
-
 
     //-- write to disk the modified city model (out.city.json)
     std::ofstream o("out.city.json");
@@ -320,7 +361,8 @@ int get_no_ground_surfaces(json &j) {
     return total;
 }
 
-double findSurfaceArea(json j, json &surface, Plane3 bestplane) {
+
+double findSurfaceArea(json j, json surface, Plane3 bestplane) {
     Triangulation triangulation;
 
     std::vector<double> areas;
@@ -402,11 +444,12 @@ double findSurfaceArea(json j, json &surface, Plane3 bestplane) {
     } else if (areas.size() == 0) {
         return 0.0;
     }
+
+    return 0.0;
 }
 
 bool arePointsCollinear(const std::vector<Point2>& points) {
     if (points.size() < 3) {
-        // Fewer than 3 points are always collinear
         return true;
     }
 
@@ -417,7 +460,7 @@ bool arePointsCollinear(const std::vector<Point2>& points) {
         }
     }
 
-    return true; // All triplets are collinear
+    return true;
 }
 
 double calculateRidge(std::vector<double> areas, std::vector<double> maxZvalues) {
@@ -448,4 +491,103 @@ double calculateEave(std::vector<double> areas, std::vector<double> minZvalues) 
     }
 
     return eave;
+}
+
+
+std::vector<std::vector<std::vector<int>>> extrudeGroundSurface(json& j,
+                                                                std::vector<std::vector<std::vector<int>>> groundSurface,
+                                                                double &newZ) {
+    std::vector<std::vector<std::vector<int>>> extrudedGroundSurfaceBoundaries;
+
+    for (const auto& surface : groundSurface) {
+        std::vector<std::vector<int>> newSurface;
+        for (const auto& loop : surface) {
+            std::vector<int> newLoop;
+            for (const auto vertexIndex : loop) {
+                auto& vi = j["vertices"][vertexIndex];
+                double x = (vi[0].get<double>() * j["transform"]["scale"][0].get<double>()) +
+                           j["transform"]["translate"][0].get<double>();
+                double y = (vi[1].get<double>() * j["transform"]["scale"][1].get<double>()) +
+                           j["transform"]["translate"][1].get<double>();
+                double z = newZ;
+
+                // inverse scale and translate
+                double newX = (x - j["transform"]["translate"][0].get<double>()) / j["transform"]["scale"][0].get<double>();
+                double newY = (y - j["transform"]["translate"][1].get<double>()) / j["transform"]["scale"][1].get<double>();
+                double newZ = (z - j["transform"]["translate"][2].get<double>()) / j["transform"]["scale"][2].get<double>();
+
+                int newVertexIndex = j["vertices"].size();
+                j["vertices"].push_back({newX, newY, newZ});
+
+                newLoop.push_back(newVertexIndex);
+            }
+            newSurface.push_back(newLoop);
+        }
+        extrudedGroundSurfaceBoundaries.push_back(newSurface);
+    }
+    return extrudedGroundSurfaceBoundaries;
+}
+
+std::vector<std::vector<int>> constructWallBoundaries(
+        const std::vector<std::vector<std::vector<int>>>& groundSurfaceBoundaries,
+        const std::vector<std::vector<std::vector<int>>>& extrudedGroundSurfaceBoundaries) {
+
+    std::vector<std::vector<int>> wallBoundaries;
+
+    for (size_t surfaceIndex = 0; surfaceIndex < groundSurfaceBoundaries.size(); ++surfaceIndex) {
+        for (size_t loopIndex = 0; loopIndex < groundSurfaceBoundaries[surfaceIndex].size(); ++loopIndex) {
+            const auto& groundLoop = groundSurfaceBoundaries[surfaceIndex][loopIndex];
+            const auto& extrudedLoop = extrudedGroundSurfaceBoundaries[surfaceIndex][loopIndex];
+
+            for (size_t vertexIndex = 0; vertexIndex < groundLoop.size(); ++vertexIndex) {
+                size_t nextVertexIndex = (vertexIndex + 1) % groundLoop.size();
+
+                std::vector<int> wall = {
+                        groundLoop[vertexIndex],                    // Current ground vertex
+                        groundLoop[nextVertexIndex],                // Next ground vertex
+                        extrudedLoop[nextVertexIndex],              // Next extruded ground vertex
+                        extrudedLoop[vertexIndex]                   // Current extruded ground vertex
+                };
+                std::reverse(wall.begin(), wall.end());
+                wallBoundaries.push_back(wall);
+            }
+        }
+    }
+
+    return wallBoundaries;
+}
+
+
+std::vector<std::vector<std::vector<std::vector<int>>>> createSolid(
+        const std::vector<std::vector<std::vector<int>>>& groundSurfaceBoundaries,
+        const std::vector<std::vector<std::vector<int>>>& extrudedGroundSurfaceBoundaries,
+        const std::vector<std::vector<int>>& wallBoundaries) {
+
+    std::vector<std::vector<std::vector<std::vector<int>>>> solid;
+
+    // Each shell is a list of surfaces (where each surface is a loop of vertex indices)
+    std::vector<std::vector<std::vector<int>>> shell;
+
+    // Assuming there's one ground surface and one extruded surface,
+    // they become the first and last elements of the shell.
+    // Note: This example assumes each surface is defined by a single loop for simplicity.
+    // Ground surface
+    for (const auto& loop : groundSurfaceBoundaries) {
+        shell.push_back(loop);
+    }
+
+    // Wall surfaces
+    for (const auto& wall : wallBoundaries) {
+        shell.push_back({wall}); // Wrap wall in another vector to match the nesting
+    }
+
+    // Extruded surface
+    for (const auto& loop : extrudedGroundSurfaceBoundaries) {
+        shell.push_back(loop);
+    }
+
+    // Add the assembled shell to the solid
+    solid.push_back(shell);
+
+    return solid;
 }
