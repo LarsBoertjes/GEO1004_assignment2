@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <limits>
+#include <numeric>
 
 //-- https://github.com/nlohmann/json
 //-- used to read and write (City)JSON
@@ -54,11 +55,14 @@ void  visit_roofsurfaces(json &j);
 void  visit_groundsurfaces(json &j);
 void  list_all_vertices(json &j);
 double findSurfaceArea(json j, json &surface, Plane3 bestplane);
+bool arePointsCollinear(const std::vector<Point2>& points);
+double calculateRidge(std::vector<double> areas, std::vector<double> maxZvalues);
+double calculateEave(std::vector<double> areas, std::vector<double> minZvalues);
 
 
 int main(int argc, const char * argv[]) {
     //-- will read the file passed as argument or twobuildings.city.json if nothing is passed
-    const char* filename = (argc > 1) ? argv[1] : "../data/specialcase_2.city.json";
+    const char* filename = (argc > 1) ? argv[1] : "../data/limburg.city.json";
     std::cout << "Processing: " << filename << std::endl;
     std::ifstream input(filename);
     json j;
@@ -78,16 +82,18 @@ int main(int argc, const char * argv[]) {
         for (auto &geom: co.value()["geometry"]) {
             if (geom.contains("boundaries")) {
 
-                double overallMinZ = std::numeric_limits<double>::infinity();
-                double overallMaxZ = -std::numeric_limits<double>::infinity();
-                double area = 0;
+
 
                 // iterating over surfaces collection
                 for (auto &shell: geom["boundaries"]) {
-
                     // iterate over surfaces
                     // find out if it is potentially roof or ground
+
+
                     for (int i = 0; i < shell.size(); ++i) {
+                        double overallMinZ = std::numeric_limits<double>::infinity();
+                        double overallMaxZ = -std::numeric_limits<double>::infinity();
+                        double area;
                         std::vector<Point3> vertex_coord;
                         double totalHeight = 0;
 
@@ -124,12 +130,15 @@ int main(int argc, const char * argv[]) {
                                 }
                                 surfaces.push_back(exterior_interiors);
                             }
-                            potentialSurfaces.push_back(std::make_pair(surfaces, averageHeight));
+
+                            potentialSurfaces.emplace_back(surfaces, averageHeight);
 
                             // find area to assign as weight for eave/ridge calculation
                             area = findSurfaceArea(j, shell[i], plane);
-                            std::cout << "Area: " << area << std::endl;
-                            std::cout << "averageHeight: " << averageHeight << std::endl;
+
+                            surfaceAreasRoofSurfaces.push_back(area);
+                            maxZRoofSurfaces.push_back(overallMaxZ);
+                            minZRoofSurfaces.push_back(overallMinZ);
                         }
                     }
                 }
@@ -150,15 +159,11 @@ int main(int argc, const char * argv[]) {
                             groundSurfaceBoundaries.push_back(surface.first);
                         } else if (surface.second > threshold) {
                             roofSurfaceBoundaries.push_back(surface.first);
-                            surfaceAreasRoofSurfaces.push_back(area);
-                            maxZRoofSurfaces.push_back(overallMaxZ);
-                            minZRoofSurfaces.push_back(overallMinZ);
                         }
                     }
                 }
             }
         }
-
 
         json MultiSurfaceLOD02 = {
                 {"type", "MultiSurface"},
@@ -174,7 +179,40 @@ int main(int argc, const char * argv[]) {
             std::cout << surfaceAreasRoofSurfaces[i] << " " << maxZRoofSurfaces[i] << " " << minZRoofSurfaces[i] << std::endl;
         }
 
+        // remove groundSurfaces from area, minZ, maxZ vectors
+        int n = groundSurfaceBoundaries.size();
+
+        std::vector<int> indices(minZRoofSurfaces.size());
+        std::iota(indices.begin(), indices.end(), 0); // Fill indices with 0, 1, ..., N-1
+
+        std::nth_element(indices.begin(), indices.begin() + n, indices.end(),
+                         [&minZRoofSurfaces](int i1, int i2) { return minZRoofSurfaces[i1] < minZRoofSurfaces[i2]; });
+
+        std::sort(indices.begin(), indices.begin() + n, std::greater<>()); // Sort the first n indices in descending order for safe removal
+
+        // Step 2: Remove elements from vectors using the identified indices
+        for (int i = 0; i < n; ++i) {
+            int idxToRemove = indices[i];
+            // Remove elements from the vectors
+            surfaceAreasRoofSurfaces.erase(surfaceAreasRoofSurfaces.begin() + idxToRemove);
+            maxZRoofSurfaces.erase(maxZRoofSurfaces.begin() + idxToRemove);
+            minZRoofSurfaces.erase(minZRoofSurfaces.begin() + idxToRemove);
+        }
+
+        for (int i = 0; i < surfaceAreasRoofSurfaces.size(); ++i) {
+            std::cout << surfaceAreasRoofSurfaces[i] << " " << maxZRoofSurfaces[i] << " " << minZRoofSurfaces[i] << std::endl;
+        }
+
+        double ridge = calculateRidge(surfaceAreasRoofSurfaces, maxZRoofSurfaces);
+        double eave = calculateEave(surfaceAreasRoofSurfaces, minZRoofSurfaces);
+        double lod2z = ((ridge - eave) * 0.7) + eave;
+
+        std::cout << "ridge: " << ridge << std::endl;
+        std::cout << "eave: " << eave << std::endl;
+        std::cout << "lod2z: " << lod2z << std::endl;
+
     }
+
 
 
 
@@ -291,9 +329,8 @@ int get_no_ground_surfaces(json &j) {
 
 double findSurfaceArea(json j, json &surface, Plane3 bestplane) {
     std::cout << surface << std::endl;
-    // Initialize triangulation
+
     Triangulation triangulation;
-    double surfaceArea = 0;
 
     std::vector<double> areas;
 
@@ -311,11 +348,22 @@ double findSurfaceArea(json j, json &surface, Plane3 bestplane) {
             facePoints2D.push_back(point2d);
         }
 
+        if (arePointsCollinear(facePoints2D)) {
+            std::cout << "The points are collinear" << std::endl;
+            return 0.0;
+        } else {
+            std::cout << "The points are not collinear" << std::endl;
+        }
+
+
         for (const Point2& pt : facePoints2D) {
             triangulation.insert(pt);
         }
 
-        facePoints2D.push_back(facePoints2D[0]);
+
+        if (!facePoints2D.empty()) {
+            facePoints2D.push_back(facePoints2D[0]);
+        }
 
         for (int i = 0; i < facePoints2D.size() - 1; ++i) {
             triangulation.insert_constraint(facePoints2D[i], facePoints2D[i + 1]);
@@ -365,5 +413,53 @@ double findSurfaceArea(json j, json &surface, Plane3 bestplane) {
     } else if (areas.size() > 1) {
         double sumOfRest = std::accumulate(areas.begin() + 1, areas.end(), 0.0);
         return areas[0] - sumOfRest;
+    } else if (areas.size() == 0) {
+        return 0.0;
     }
+}
+
+bool arePointsCollinear(const std::vector<Point2>& points) {
+    if (points.size() < 3) {
+        // Fewer than 3 points are always collinear
+        return true;
+    }
+
+    // Check every consecutive triplet for collinearity
+    for (size_t i = 2; i < points.size(); ++i) {
+        if (!CGAL::collinear(points[i - 2], points[i - 1], points[i])) {
+            return false; // Found a non-collinear triplet
+        }
+    }
+
+    return true; // All triplets are collinear
+}
+
+double calculateRidge(std::vector<double> areas, std::vector<double> maxZvalues) {
+    double totalArea = 0;
+    double ridge = 0;
+
+    for (double area : areas) {
+        totalArea += area;
+    }
+
+    for (int i = 0; i < maxZvalues.size(); ++i) {
+        ridge += ((areas[i]/totalArea) * maxZvalues[i]);
+    }
+
+    return ridge;
+}
+
+double calculateEave(std::vector<double> areas, std::vector<double> minZvalues) {
+    double totalArea = 0;
+    double eave = 0;
+
+    for (double area : areas) {
+        totalArea += area;
+    }
+
+    for (int i = 0; i < minZvalues.size(); ++i) {
+        eave += ((areas[i]/totalArea) * minZvalues[i]);
+    }
+
+    return eave;
 }
