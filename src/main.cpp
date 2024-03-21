@@ -68,11 +68,12 @@ std::vector<std::vector<std::vector<std::vector<int>>>> createSolid(
         const std::vector<std::vector<std::vector<int>>>& groundSurfaceBoundaries,
         const std::vector<std::vector<std::vector<int>>>& extrudedGroundSurfaceBoundaries,
         const std::vector<std::vector<int>>& wallBoundaries);
+std::vector<std::vector<std::vector<int>>> flipOrientation(std::vector<std::vector<std::vector<int>>>& surfaces);
 
 
 int main(int argc, const char * argv[]) {
     //-- will read the file passed as argument or twobuildings.city.json if nothing is passed
-    const char* filename = (argc > 1) ? argv[1] : "../data/limburg.city.json";
+    const char* filename = (argc > 1) ? argv[1] : "../data/specialcase_2.city.json";
     std::cout << "Processing: " << filename << std::endl;
     std::ifstream input(filename);
     json j;
@@ -204,16 +205,7 @@ int main(int argc, const char * argv[]) {
         std::vector<std::vector<int>> wallBoundaries = constructWallBoundaries(groundSurfaceBoundaries, extrudedGroundSurfaceBoundaries);
 
         // reverse roof for better view results in CityJSON Ninja
-        std::vector<std::vector<std::vector<int>>> reversedRoof;
-
-        for (auto& surface : extrudedGroundSurfaceBoundaries) {
-            std::vector<std::vector<int>> reversedSurface;
-            for (auto loop : surface) {
-                std::reverse(loop.begin(), loop.end());
-                reversedSurface.push_back(loop); // Store the reversed loop
-            }
-            reversedRoof.push_back(reversedSurface); // Store the surface with reversed loops
-        }
+        std::vector<std::vector<std::vector<int>>> reversedRoof = flipOrientation(extrudedGroundSurfaceBoundaries);
 
         // create Solid
         auto solid = createSolid(groundSurfaceBoundaries, reversedRoof, wallBoundaries);
@@ -228,16 +220,7 @@ int main(int argc, const char * argv[]) {
         co.value()["geometry"].push_back(SolidLOD12);
 
         // reverse ground as well for better view in CityJSON Ninja
-        std::vector<std::vector<std::vector<int>>> reversedGround;
-
-        for (auto& surface : groundSurfaceBoundaries) {
-            std::vector<std::vector<int>> reversedSurface;
-            for (auto loop : surface) {
-                std::reverse(loop.begin(), loop.end());
-                reversedSurface.push_back(loop); // Store the reversed loop
-            }
-            reversedGround.push_back(reversedSurface); // Store the surface with reversed loops
-        }
+        std::vector<std::vector<std::vector<int>>> reversedGround = flipOrientation(groundSurfaceBoundaries);
 
         // write lod 0.2 to file
         json MultiSurfaceLOD02 = {
@@ -252,7 +235,7 @@ int main(int argc, const char * argv[]) {
 
     //-- write to disk the modified city model (out.city.json)
     std::ofstream o("out.city.json");
-    o << j.dump(5) << std::endl;
+    o << j.dump(1) << std::endl;
     o.close();
 
     return 0;
@@ -590,4 +573,19 @@ std::vector<std::vector<std::vector<std::vector<int>>>> createSolid(
     solid.push_back(shell);
 
     return solid;
+}
+
+std::vector<std::vector<std::vector<int>>> flipOrientation(std::vector<std::vector<std::vector<int>>>& surfaces) {
+    std::vector<std::vector<std::vector<int>>> flippedSurfaces;
+
+    for (auto &surface : surfaces) {
+        std::vector<std::vector<int>> reversedSurface;
+        for (auto loop : surface) {
+            std::reverse(loop.begin(), loop.end());
+            reversedSurface.push_back(loop);
+        }
+        flippedSurfaces.push_back(reversedSurface);
+    }
+
+    return flippedSurfaces;
 }
