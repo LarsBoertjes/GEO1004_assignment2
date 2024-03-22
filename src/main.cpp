@@ -63,7 +63,7 @@ findPotentialSurfaces(json& j, json& surfacesArray);
 
 int main(int argc, const char * argv[]) {
     //-- will read the file passed as argument or twobuildings.city.json if nothing is passed
-    const char* filename = (argc > 1) ? argv[1] : "../data/specialcase_1.city.json";
+    const char* filename = (argc > 1) ? argv[1] : "../data/tudcampus.city.json";
     std::cout << "Processing: " << filename << std::endl;
     std::ifstream input(filename);
     json j;
@@ -186,7 +186,6 @@ int main(int argc, const char * argv[]) {
         };
 
         co.value()["geometry"].push_back(MultiSurfaceLOD02);
-
     }
 
     //-- write to disk the modified city model (out.city.json)
@@ -302,89 +301,85 @@ int get_no_ground_surfaces(json &j) {
 
 
 double findSurfaceArea(json j, json surface, Plane3 bestplane) {
+    // input is surface with possible extra loops for interior rings.
+
+    // initialize triangulation
     Triangulation triangulation;
 
-    std::vector<double> areas;
+    // store the areas of all loops
+    double faceArea = 0;
 
-    for (auto &face : surface) {
-        double areaFace = 0;
-        std::vector<Point2> facePoints2D;
+    for (auto &loop : surface) {
+        std::vector<Point2> loopPoints2D;
 
-        for (auto vertex : face) {
+        for (const auto& vertex : loop) {
             std::vector<int> vi = j["vertices"][vertex.get<int>()];
             double x = (vi[0] * j["transform"]["scale"][0].get<double>()) + j["transform"]["translate"][0].get<double>();
             double y = (vi[1] * j["transform"]["scale"][1].get<double>()) + j["transform"]["translate"][1].get<double>();
             double z = (vi[2] * j["transform"]["scale"][2].get<double>()) + j["transform"]["translate"][2].get<double>();
             Point3 point3d(x, y, z);
             Point2 point2d = bestplane.to_2d(point3d);
-            facePoints2D.push_back(point2d);
+            loopPoints2D.push_back(point2d);
         }
 
-        if (arePointsCollinear(facePoints2D)) {
+        // return zero area if points are collinear
+        if (arePointsCollinear(loopPoints2D)) {
             return 0.0;
         }
 
-        for (const Point2& pt : facePoints2D) {
+        // insert points in triangulation object
+        for (const Point2& pt : loopPoints2D) {
             triangulation.insert(pt);
         }
 
-        if (!facePoints2D.empty()) {
-            facePoints2D.push_back(facePoints2D[0]);
+        if (!loopPoints2D.empty()) {
+            loopPoints2D.push_back(loopPoints2D[0]);
         }
 
-        for (int i = 0; i < facePoints2D.size() - 1; ++i) {
-            triangulation.insert_constraint(facePoints2D[i], facePoints2D[i + 1]);
+        // insert constraints to triangulation
+        for (int i = 0; i < loopPoints2D.size() - 1; ++i) {
+            triangulation.insert_constraint(loopPoints2D[i], loopPoints2D[i + 1]);
         }
 
-        // Label triangulation with interior exterior
-        std::list<Triangulation::Face_handle> to_check;
-        triangulation.infinite_face()->info().processed = true;
-        CGAL_assertion(triangulation.infinite_face()->info().processed == true);
-        CGAL_assertion(triangulation.infinite_face()->info().interior == false);
-        to_check.push_back(triangulation.infinite_face());
-        while (!to_check.empty()) {
-            CGAL_assertion(to_check.front()->info().processed == true);
-            for (int neighbour = 0; neighbour < 3; ++neighbour) {
-                if (to_check.front()->neighbor(neighbour)->info().processed) {
+    }
 
+    // Label triangulation with interior exterior
+    std::list<Triangulation::Face_handle> to_check;
+    triangulation.infinite_face()->info().processed = true;
+    CGAL_assertion(triangulation.infinite_face()->info().processed == true);
+    CGAL_assertion(triangulation.infinite_face()->info().interior == false);
+    to_check.push_back(triangulation.infinite_face());
+    while (!to_check.empty()) {
+        CGAL_assertion(to_check.front()->info().processed == true);
+        for (int neighbour = 0; neighbour < 3; ++neighbour) {
+            if (to_check.front()->neighbor(neighbour)->info().processed) {
+
+            } else {
+                to_check.front()->neighbor(neighbour)->info().processed = true;
+                CGAL_assertion(to_check.front()->neighbor(neighbour)->info().processed == true);
+                if (triangulation.is_constrained(Triangulation::Edge(to_check.front(), neighbour))) {
+                    to_check.front()->neighbor(neighbour)->info().interior = !to_check.front()->info().interior;
+                    to_check.push_back(to_check.front()->neighbor(neighbour));
                 } else {
-                    to_check.front()->neighbor(neighbour)->info().processed = true;
-                    CGAL_assertion(to_check.front()->neighbor(neighbour)->info().processed == true);
-                    if (triangulation.is_constrained(Triangulation::Edge(to_check.front(), neighbour))) {
-                        to_check.front()->neighbor(neighbour)->info().interior = !to_check.front()->info().interior;
-                        to_check.push_back(to_check.front()->neighbor(neighbour));
-                    } else {
-                        to_check.front()->neighbor(neighbour)->info().interior = to_check.front()->info().interior;
-                        to_check.push_back(to_check.front()->neighbor(neighbour));
-                    }
+                    to_check.front()->neighbor(neighbour)->info().interior = to_check.front()->info().interior;
+                    to_check.push_back(to_check.front()->neighbor(neighbour));
                 }
-            } to_check.pop_front();
-        }
-
-        for (auto it = triangulation.finite_faces_begin(); it != triangulation.finite_faces_end(); ++it) {
-            if (it->info().interior) {
-                Point2 v0 = it->vertex(0)->point();
-                Point2 v1 = it->vertex(1)->point();
-                Point2 v2 = it->vertex(2)->point();
-
-                double area = CGAL::area(v0, v1, v2);
-                areaFace += area;
             }
+        } to_check.pop_front();
+    }
 
+    for (auto it = triangulation.finite_faces_begin(); it != triangulation.finite_faces_end(); ++it) {
+        // if it belongs to the interior
+        if (it->info().interior) {
+            Point2 v0 = it->vertex(0)->point();
+            Point2 v1 = it->vertex(1)->point();
+            Point2 v2 = it->vertex(2)->point();
+
+            double areaTriangle = CGAL::area(v0, v1, v2);
+            faceArea += areaTriangle;
         }
-        areas.push_back(areaFace);
     }
-
-    if (areas.size() == 1) {
-        return areas[0];
-    } else if (areas.size() > 1) {
-        double sumOfRest = std::accumulate(areas.begin() + 1, areas.end(), 0.0);
-        return areas[0] - sumOfRest;
-    } else if (areas.size() == 0) {
-        return 0.0;
-    }
-
-    return 0.0;
+    return faceArea;
 }
 
 bool arePointsCollinear(const std::vector<Point2>& points) {
@@ -395,7 +390,7 @@ bool arePointsCollinear(const std::vector<Point2>& points) {
     // Check every consecutive triplet for collinearity
     for (size_t i = 2; i < points.size(); ++i) {
         if (!CGAL::collinear(points[i - 2], points[i - 1], points[i])) {
-            return false; // Found a non-collinear triplet
+            return false;
         }
     }
 
@@ -410,16 +405,10 @@ double calculateRidge(std::vector<double> areas, std::vector<double> maxZvalues)
         totalArea += area;
     }
 
-    std::cout << "TotalArea: " << totalArea << std::endl;
-
     for (int i = 0; i < maxZvalues.size(); ++i) {
         ridge += ((areas[i]/totalArea) * maxZvalues[i]);
-        std::cout << "weight: " << areas[i]/totalArea << std::endl;
-        std::cout << "Z-val: " << maxZvalues[i] << std::endl;
-    }
 
-    std::cout << "ridge: " << ridge << std::endl;
-    std::cout << "-------------------------------" << std::endl;
+    }
 
     return ridge;
 }
@@ -511,13 +500,8 @@ std::vector<std::vector<std::vector<std::vector<int>>>> createSolid(
 
     std::vector<std::vector<std::vector<std::vector<int>>>> solid;
 
-    // Each shell is a list of surfaces (where each surface is a loop of vertex indices)
     std::vector<std::vector<std::vector<int>>> shell;
 
-    // Assuming there's one ground surface and one extruded surface,
-    // they become the first and last elements of the shell.
-    // Note: This example assumes each surface is defined by a single loop for simplicity.
-    // Ground surface
     for (const auto& loop : groundSurfaceBoundaries) {
         shell.push_back(loop);
     }
@@ -589,7 +573,6 @@ findPotentialSurfaces(json& j, json& surfacesArray) {
         Plane3 plane;
         CGAL::linear_least_squares_fitting_3(vertex_coord.begin(), vertex_coord.end(), plane, CGAL::Dimension_tag<0>());
 
-
         // check if polygon is simple by converting to 2d
         Polygon_2 polygon;
         for (Point3 &vertex : vertex_coord) {
@@ -628,11 +611,6 @@ findPotentialSurfaces(json& j, json& surfacesArray) {
             surfaceAreasRoofSurfaces.push_back(area);
             maxZRoofSurfaces.push_back(overallMaxZ);
             minZRoofSurfaces.push_back(overallMinZ);
-
-            // compute weighted z-values for lod1.2 z-value computation
-            /*double weightedMaxZ = area * overallMaxZ;
-            double weightedMinZ = area * overallMinZ;*/
-
 
         }
 
