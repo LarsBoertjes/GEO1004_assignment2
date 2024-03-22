@@ -56,11 +56,14 @@ std::vector<std::vector<std::vector<std::vector<int>>>> createSolid(
         const std::vector<std::vector<std::vector<int>>>& extrudedGroundSurfaceBoundaries,
         const std::vector<std::vector<int>>& wallBoundaries);
 std::vector<std::vector<std::vector<int>>> flipOrientation(std::vector<std::vector<std::vector<int>>>& surfaces);
+std::tuple<std::vector<std::pair<std::vector<std::vector<int>>, double>>,
+        std::vector<double>, std::vector<double>, std::vector<double>>
+findPotentialSurfaces(json& j, json& surfacesArray);
 
 
 int main(int argc, const char * argv[]) {
     //-- will read the file passed as argument or twobuildings.city.json if nothing is passed
-    const char* filename = (argc > 1) ? argv[1] : "../data/tudcampus.city.json";
+    const char* filename = (argc > 1) ? argv[1] : "../data/specialcase_1.city.json";
     std::cout << "Processing: " << filename << std::endl;
     std::ifstream input(filename);
     json j;
@@ -81,83 +84,39 @@ int main(int argc, const char * argv[]) {
         for (auto &geom: co.value()["geometry"]) {
             if (geom.contains("boundaries")) {
 
-                // iterating over surfaces collection
-                for (auto &shell: geom["boundaries"]) {
+                if (geom["type"] == "Solid") {
+                    // go one layer deeper for solids
+                    // iterating over surfaces collection
+                    for (auto &shell: geom["boundaries"]) {
 
-                    // iterate over surfaces
-                    for (int i = 0; i < shell.size(); ++i) {
-                        double overallMinZ = std::numeric_limits<double>::infinity();
-                        double overallMaxZ = -std::numeric_limits<double>::infinity();
-                        double area;
-                        std::vector<Point3> vertex_coord;
-                        double totalHeight = 0;
+                        auto [potentialRoofGround, surfaceAreas, maxZs, minZs] = findPotentialSurfaces(j, shell);
 
-                        // retrieve coordinates
-                        for (const auto& vertices : shell[i][0]) {
-                            std::vector<int> vi = j["vertices"][vertices.get<int>()];
-                            double x = (vi[0] * j["transform"]["scale"][0].get<double>()) +
-                                       j["transform"]["translate"][0].get<double>();
-                            double y = (vi[1] * j["transform"]["scale"][1].get<double>()) +
-                                       j["transform"]["translate"][1].get<double>();
-                            double z = (vi[2] * j["transform"]["scale"][2].get<double>()) +
-                                       j["transform"]["translate"][2].get<double>();
-                            vertex_coord.emplace_back(x, y, z);
-                            totalHeight += z;
+                        // for each collection of surfaces extract potentials, areas, min and max values.
+                        potentialSurfaces.insert(potentialSurfaces.end(), potentialRoofGround.begin(), potentialRoofGround.end());
+                        surfaceAreasRoofSurfaces.insert(surfaceAreasRoofSurfaces.end(), surfaceAreas.begin(), surfaceAreas.end());
+                        maxZRoofSurfaces.insert(maxZRoofSurfaces.end(), maxZs.begin(), maxZs.end());
+                        minZRoofSurfaces.insert(minZRoofSurfaces.end(), minZs.begin(), minZs.end());
 
-                            if (z < overallMinZ) overallMinZ = z;
-                            if (z > overallMaxZ) overallMaxZ = z;
-
-                        }
-
-
-                        Plane3 plane;
-                        CGAL::linear_least_squares_fitting_3(vertex_coord.begin(), vertex_coord.end(), plane,
-                                                             CGAL::Dimension_tag<0>());
-
-                        Polygon_2 polygon;
-                        for (auto vertex : vertex_coord) {
-                            Point2 vertex_2d = plane.to_2d(vertex);
-                            polygon.push_back(vertex_2d);
-                        }
-
-                        if (!polygon.is_simple()) {
-                            std::cout << "this polygon is not simple " << std::endl;
-                        }
-
-                        Vector3 normal = plane.orthogonal_vector();
-                        normal = normal / std::sqrt(normal.squared_length());
-                        double averageHeight = totalHeight / vertex_coord.size();
-
-                        // if normal vector points upwards or downwards it is a potential roof/ground surface
-                        if (normal.z() > 0.25 || normal.z() < -0.25) {
-                            std::vector<std::vector<int>> surfaces;
-                            for (const auto& surface : shell[i]) {
-                                std::vector<int> exterior_interiors;
-                                for (const auto& intext : surface) {
-                                    exterior_interiors.push_back(intext);
-                                }
-                                surfaces.push_back(exterior_interiors);
-                            }
-
-                            potentialSurfaces.emplace_back(surfaces, averageHeight);
-
-                            // find area to assign as weight for eave/ridge calculation
-                            area = findSurfaceArea(j, shell[i], plane);
-
-                            surfaceAreasRoofSurfaces.push_back(area);
-                            maxZRoofSurfaces.push_back(overallMaxZ);
-                            minZRoofSurfaces.push_back(overallMinZ);
-                        }
                     }
+
+                } else if (geom["type"] == "MultiSurface") {
+                    auto [potentialRoofGround, surfaceAreas, maxZs, minZs] = findPotentialSurfaces(j, geom["boundaries"]);
+
+                    // for each collection of surfaces extract potentials, areas, min and max values.
+                    potentialSurfaces.insert(potentialSurfaces.end(), potentialRoofGround.begin(), potentialRoofGround.end());
+                    surfaceAreasRoofSurfaces.insert(surfaceAreasRoofSurfaces.end(), surfaceAreas.begin(), surfaceAreas.end());
+                    maxZRoofSurfaces.insert(maxZRoofSurfaces.end(), maxZs.begin(), maxZs.end());
+                    minZRoofSurfaces.insert(minZRoofSurfaces.end(), minZs.begin(), minZs.end());
                 }
 
-                // potential surface with lowest elevation is stored as ground, the others as roof
+
+                // potential surfaces within the lowest 10 percent are stored as ground
                 if (!potentialSurfaces.empty()) {
                     std::sort(potentialSurfaces.begin(), potentialSurfaces.end(), [](const auto &a, const auto &b) {
                         return a.second < b.second;
                     });
 
-
+                    // calculate 10 percent threshold
                     double minZ = potentialSurfaces[0].second;
                     double maxZ = potentialSurfaces[potentialSurfaces.size() - 1].second;
                     double threshold = minZ + (0.1 * (maxZ - minZ));
@@ -177,17 +136,14 @@ int main(int argc, const char * argv[]) {
         int n = groundSurfaceBoundaries.size();
 
         std::vector<int> indices(minZRoofSurfaces.size());
-        std::iota(indices.begin(), indices.end(), 0); // Fill indices with 0, 1, ..., N-1
-
+        std::iota(indices.begin(), indices.end(), 0);
         std::nth_element(indices.begin(), indices.begin() + n, indices.end(),
                          [&minZRoofSurfaces](int i1, int i2) { return minZRoofSurfaces[i1] < minZRoofSurfaces[i2]; });
-
         std::sort(indices.begin(), indices.begin() + n, std::greater<>()); // Sort the first n indices in descending order for safe removal
 
         // remove elements from vectors using the identified indices
         for (int i = 0; i < n; ++i) {
             int idxToRemove = indices[i];
-            // Remove elements from the vectors
             surfaceAreasRoofSurfaces.erase(surfaceAreasRoofSurfaces.begin() + idxToRemove);
             maxZRoofSurfaces.erase(maxZRoofSurfaces.begin() + idxToRemove);
             minZRoofSurfaces.erase(minZRoofSurfaces.begin() + idxToRemove);
@@ -201,7 +157,7 @@ int main(int argc, const char * argv[]) {
         // Construct LoD1.2
         std::vector<std::vector<std::vector<int>>> extrudedGroundSurfaceBoundaries = extrudeGroundSurface(j, groundSurfaceBoundaries, lod12z);
 
-        // Extract wallboundaries
+        // Extract wall boundaries
         std::vector<std::vector<int>> wallBoundaries = constructWallBoundaries(groundSurfaceBoundaries, extrudedGroundSurfaceBoundaries);
 
         // reverse roof for better view results in CityJSON Ninja
@@ -454,9 +410,16 @@ double calculateRidge(std::vector<double> areas, std::vector<double> maxZvalues)
         totalArea += area;
     }
 
+    std::cout << "TotalArea: " << totalArea << std::endl;
+
     for (int i = 0; i < maxZvalues.size(); ++i) {
         ridge += ((areas[i]/totalArea) * maxZvalues[i]);
+        std::cout << "weight: " << areas[i]/totalArea << std::endl;
+        std::cout << "Z-val: " << maxZvalues[i] << std::endl;
     }
+
+    std::cout << "ridge: " << ridge << std::endl;
+    std::cout << "-------------------------------" << std::endl;
 
     return ridge;
 }
@@ -588,4 +551,92 @@ std::vector<std::vector<std::vector<int>>> flipOrientation(std::vector<std::vect
     }
 
     return flippedSurfaces;
+}
+
+
+std::tuple<std::vector<std::pair<std::vector<std::vector<int>>, double>>,
+        std::vector<double>, std::vector<double>, std::vector<double>>
+findPotentialSurfaces(json& j, json& surfacesArray) {
+    std::vector<std::pair<std::vector<std::vector<int>>, double>> potentialRoofGround;
+    std::vector<double> surfaceAreasRoofSurfaces;
+    std::vector<double> maxZRoofSurfaces;
+    std::vector<double> minZRoofSurfaces;
+
+    for (int i = 0; i < surfacesArray.size(); ++i) {
+        double overallMinZ = std::numeric_limits<double>::infinity();
+        double overallMaxZ = -std::numeric_limits<double>::infinity();
+        double area;
+        double totalHeight = 0;
+        std::vector<Point3> vertex_coord;
+
+        // retrieve coordinates from indices to find normal later
+        // only access first surface because if it has interior loops it will be the same plane
+        for (const auto& vertices : surfacesArray[i][0]) {
+            std::vector<int> vi = j["vertices"][vertices.get<int>()];
+            double x = (vi[0] * j["transform"]["scale"][0].get<double>()) + j["transform"]["translate"][0].get<double>();
+            double y = (vi[1] * j["transform"]["scale"][1].get<double>()) + j["transform"]["translate"][1].get<double>();
+            double z = (vi[2] * j["transform"]["scale"][2].get<double>()) + j["transform"]["translate"][2].get<double>();
+            vertex_coord.emplace_back(x, y, z);
+            totalHeight += z;
+
+            // update min and max z-values for all surfaces
+            if (z < overallMinZ) overallMinZ = z;
+            if (z > overallMaxZ) overallMaxZ = z;
+
+        }
+
+        // find best-fitting plane for normal vector
+        Plane3 plane;
+        CGAL::linear_least_squares_fitting_3(vertex_coord.begin(), vertex_coord.end(), plane, CGAL::Dimension_tag<0>());
+
+
+        // check if polygon is simple by converting to 2d
+        Polygon_2 polygon;
+        for (Point3 &vertex : vertex_coord) {
+            Point2 vertex_2d = plane.to_2d(vertex);
+            polygon.push_back(vertex_2d);
+        }
+
+        // if polygon is not simple, skip it
+        if (!polygon.is_simple()) {
+            continue;
+        }
+
+        // extract and normalize normal vector
+        Vector3 normal = plane.orthogonal_vector();
+        normal = normal / std::sqrt(normal.squared_length());
+
+        // calculating average height of plane
+        double averageHeight = totalHeight / vertex_coord.size();
+
+        // if normal vector points upwards or downwards store it as potential roof or ground surface
+        if (normal.z() > 0.25 || normal.z() < -0.25) {
+            std::vector<std::vector<int>> surfaces;
+            for (const auto& surface : surfacesArray[i]) {
+                std::vector<int> exterior_interiors;
+                for (const auto& loop : surface) {
+                    exterior_interiors.push_back(loop);
+                }
+                surfaces.push_back(exterior_interiors);
+            }
+            potentialRoofGround.emplace_back(surfaces, averageHeight);
+
+            // compute area to assign as weight for eave and ridge calculation
+            area = findSurfaceArea(j, surfacesArray[i], plane);
+
+            // store areas, min and max z-values
+            surfaceAreasRoofSurfaces.push_back(area);
+            maxZRoofSurfaces.push_back(overallMaxZ);
+            minZRoofSurfaces.push_back(overallMinZ);
+
+            // compute weighted z-values for lod1.2 z-value computation
+            /*double weightedMaxZ = area * overallMaxZ;
+            double weightedMinZ = area * overallMinZ;*/
+
+
+        }
+
+    }
+
+    return std::make_tuple(potentialRoofGround, surfaceAreasRoofSurfaces, maxZRoofSurfaces, minZRoofSurfaces);
 }
