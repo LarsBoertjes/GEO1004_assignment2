@@ -63,7 +63,7 @@ findPotentialSurfaces(json& j, json& surfacesArray);
 
 int main(int argc, const char * argv[]) {
     //-- will read the file passed as argument or twobuildings.city.json if nothing is passed
-    const char* filename = (argc > 1) ? argv[1] : "../data/twobuildings.city.json";
+    const char* filename = (argc > 1) ? argv[1] : "../data/tudcampus.city.json";
     std::cout << "Processing: " << filename << std::endl;
     std::ifstream input(filename);
     json j;
@@ -72,124 +72,141 @@ int main(int argc, const char * argv[]) {
 
     // iterate over all the city objects
     for (auto& co : j["CityObjects"].items()) {
-        std::vector<std::vector<std::vector<int>>> groundSurfaceBoundaries;
-        std::vector<std::vector<std::vector<int>>> roofSurfaceBoundaries;
-        std::vector<std::pair<std::vector<std::vector<int>>, double>> potentialSurfaces;
-        std::vector<double> surfaceAreasRoofSurfaces;
-        std::vector<double> maxZRoofSurfaces;
-        std::vector<double> minZRoofSurfaces;
+        if (co.value()["type"] == "Building" || co.value()["type"] == "BuildingPart") {
+            std::vector < std::vector < std::vector < int>>> groundSurfaceBoundaries;
+            std::vector < std::vector < std::vector < int>>> roofSurfaceBoundaries;
+            std::vector < std::pair < std::vector < std::vector < int >> , double >> potentialSurfaces;
+            std::vector<double> surfaceAreasRoofSurfaces;
+            std::vector<double> maxZRoofSurfaces;
+            std::vector<double> minZRoofSurfaces;
 
-        // iterating over boundaries
-        for (auto &geom: co.value()["geometry"]) {
-            if (geom.contains("boundaries")) {
+            // iterating over boundaries
+            for (auto &geom: co.value()["geometry"]) {
+                    if (geom.contains("boundaries")) {
 
-                if (geom["type"] == "Solid") {
-                    // go one layer deeper for solids
+                        if (geom["type"] == "Solid") {
+                            // go one layer deeper for solids
 
-                    // iterating over surfaces collection
-                    for (auto &shell: geom["boundaries"]) {
+                            // iterating over surfaces collection
+                            for (auto &shell: geom["boundaries"]) {
 
-                        // extract potential surfaces including their areas, max z-value, and min z-value
-                        auto [potentialRoofGround, surfaceAreas, maxZs, minZs] = findPotentialSurfaces(j, shell);
+                                // extract potential surfaces including their areas, max z-value, and min z-value
+                                auto [potentialRoofGround, surfaceAreas, maxZs, minZs] = findPotentialSurfaces(j,
+                                                                                                               shell);
 
-                        // for each collection of surfaces extract potentials, areas, min and max values.
-                        potentialSurfaces.insert(potentialSurfaces.end(), potentialRoofGround.begin(), potentialRoofGround.end());
-                        surfaceAreasRoofSurfaces.insert(surfaceAreasRoofSurfaces.end(), surfaceAreas.begin(), surfaceAreas.end());
-                        maxZRoofSurfaces.insert(maxZRoofSurfaces.end(), maxZs.begin(), maxZs.end());
-                        minZRoofSurfaces.insert(minZRoofSurfaces.end(), minZs.begin(), minZs.end());
-                    }
+                                // for each collection of surfaces extract potentials, areas, min and max values.
+                                potentialSurfaces.insert(potentialSurfaces.end(), potentialRoofGround.begin(),
+                                                         potentialRoofGround.end());
+                                surfaceAreasRoofSurfaces.insert(surfaceAreasRoofSurfaces.end(), surfaceAreas.begin(),
+                                                                surfaceAreas.end());
+                                maxZRoofSurfaces.insert(maxZRoofSurfaces.end(), maxZs.begin(), maxZs.end());
+                                minZRoofSurfaces.insert(minZRoofSurfaces.end(), minZs.begin(), minZs.end());
+                            }
 
-                } else if (geom["type"] == "MultiSurface") {
-                    // same as shell is here geom["boundaries"]
+                        } else if (geom["type"] == "MultiSurface") {
+                            // same as shell is here geom["boundaries"]
 
-                    // extract potential surfaces including their areas, max z-value, and min z-value
-                    auto [potentialRoofGround, surfaceAreas, maxZs, minZs] = findPotentialSurfaces(j, geom["boundaries"]);
+                            // extract potential surfaces including their areas, max z-value, and min z-value
+                            auto [potentialRoofGround, surfaceAreas, maxZs, minZs] = findPotentialSurfaces(j,
+                                                                                                           geom["boundaries"]);
 
-                    // for each collection of surfaces extract potentials, areas, min and max values.
-                    potentialSurfaces.insert(potentialSurfaces.end(), potentialRoofGround.begin(), potentialRoofGround.end());
-                    surfaceAreasRoofSurfaces.insert(surfaceAreasRoofSurfaces.end(), surfaceAreas.begin(), surfaceAreas.end());
-                    maxZRoofSurfaces.insert(maxZRoofSurfaces.end(), maxZs.begin(), maxZs.end());
-                    minZRoofSurfaces.insert(minZRoofSurfaces.end(), minZs.begin(), minZs.end());
-                }
+                            // for each collection of surfaces extract potentials, areas, min and max values.
+                            potentialSurfaces.insert(potentialSurfaces.end(), potentialRoofGround.begin(),
+                                                     potentialRoofGround.end());
+                            surfaceAreasRoofSurfaces.insert(surfaceAreasRoofSurfaces.end(), surfaceAreas.begin(),
+                                                            surfaceAreas.end());
+                            maxZRoofSurfaces.insert(maxZRoofSurfaces.end(), maxZs.begin(), maxZs.end());
+                            minZRoofSurfaces.insert(minZRoofSurfaces.end(), minZs.begin(), minZs.end());
+                        }
 
-                // potential surfaces within the lowest 10 percent are stored as ground
-                // sort potential surfaces on their average z-value
-                if (!potentialSurfaces.empty()) {
-                    std::sort(potentialSurfaces.begin(), potentialSurfaces.end(), [](const auto &a, const auto &b) {
-                        return a.second < b.second;
-                    });
+                        // potential surfaces within the lowest 10 percent are stored as ground
+                        // sort potential surfaces on their average z-value
+                        if (!potentialSurfaces.empty()) {
+                            std::sort(potentialSurfaces.begin(), potentialSurfaces.end(),
+                                      [](const auto &a, const auto &b) {
+                                          return a.second < b.second;
+                                      });
 
-                    // calculate 10 percent threshold
-                    double minZ = potentialSurfaces[0].second;
-                    double maxZ = potentialSurfaces[potentialSurfaces.size() - 1].second;
-                    double threshold = minZ + (0.1 * (maxZ - minZ));
+                            // calculate 10 percent threshold
+                            double minZ = potentialSurfaces[0].second;
+                            double maxZ = potentialSurfaces[potentialSurfaces.size() - 1].second;
+                            double threshold = minZ + (0.1 * (maxZ - minZ));
 
-                    // iterate over surfaces and store those below 10 percent as ground surface
-                    for (const auto &surface: potentialSurfaces) {
-                        if (surface.second <= threshold) {
-                            groundSurfaceBoundaries.push_back(surface.first);
-                        } else if (surface.second > threshold) {
-                            roofSurfaceBoundaries.push_back(surface.first);
+                            // iterate over surfaces and store those below 10 percent as ground surface
+                            for (const auto &surface: potentialSurfaces) {
+                                if (surface.second <= threshold) {
+                                    groundSurfaceBoundaries.push_back(surface.first);
+                                } else if (surface.second > threshold) {
+                                    roofSurfaceBoundaries.push_back(surface.first);
+                                }
+                            }
                         }
                     }
-                }
             }
+
+            // remove groundSurfaces from area, minZ, maxZ vectors
+            int n = groundSurfaceBoundaries.size();
+
+            std::vector<int> indices(minZRoofSurfaces.size());
+            std::iota(indices.begin(), indices.end(), 0);
+            std::nth_element(indices.begin(), indices.begin() + n, indices.end(),
+                             [&minZRoofSurfaces](int i1, int i2) {
+                                 return minZRoofSurfaces[i1] < minZRoofSurfaces[i2];
+                             });
+            std::sort(indices.begin(), indices.begin() + n,
+                      std::greater<>()); // Sort the first n indices in descending order for safe removal
+
+            // remove elements from vectors using the identified indices
+            for (int i = 0; i < n; ++i) {
+                int idxToRemove = indices[i];
+                surfaceAreasRoofSurfaces.erase(surfaceAreasRoofSurfaces.begin() + idxToRemove);
+                maxZRoofSurfaces.erase(maxZRoofSurfaces.begin() + idxToRemove);
+                minZRoofSurfaces.erase(minZRoofSurfaces.begin() + idxToRemove);
+            }
+
+            // calculate ridge, eave and lod1.2 z-value
+            double ridge = calculateRidge(surfaceAreasRoofSurfaces, maxZRoofSurfaces);
+            double eave = calculateEave(surfaceAreasRoofSurfaces, minZRoofSurfaces);
+            double lod12z = ((ridge - eave) * 0.7) + eave;
+
+
+            // construct LoD1.2
+            std::vector < std::vector < std::vector < int>>> extrudedGroundSurfaceBoundaries = extrudeGroundSurface(j,
+                                                                                                                    groundSurfaceBoundaries,
+                                                                                                                    lod12z);
+
+            // extract wall boundaries
+            std::vector <std::vector<int>> wallBoundaries = constructWallBoundaries(groundSurfaceBoundaries,
+                                                                                    extrudedGroundSurfaceBoundaries);
+
+            // reverse roof for better view results in CityJSON Ninja
+            std::vector < std::vector < std::vector < int>>> reversedRoof = flipOrientation(
+                    extrudedGroundSurfaceBoundaries);
+
+            // create Solid
+            auto solid = createSolid(groundSurfaceBoundaries, reversedRoof, wallBoundaries);
+
+            // write lod 1.2 to file
+            json SolidLOD12 = {
+                    {"type",       "Solid"},
+                    {"lod",        "1.2"},
+                    {"boundaries", solid}
+            };
+
+            co.value()["geometry"].push_back(SolidLOD12);
+
+            // reverse ground as well for better view in CityJSON Ninja
+            std::vector < std::vector < std::vector < int>>> reversedGround = flipOrientation(groundSurfaceBoundaries);
+
+            // write lod 0.2 to file
+            json MultiSurfaceLOD02 = {
+                    {"type",       "MultiSurface"},
+                    {"lod",        "0.2"},
+                    {"boundaries", reversedGround}
+            };
+
+            co.value()["geometry"].push_back(MultiSurfaceLOD02);
         }
-
-        // remove groundSurfaces from area, minZ, maxZ vectors
-        int n = groundSurfaceBoundaries.size();
-
-        std::vector<int> indices(minZRoofSurfaces.size());
-        std::iota(indices.begin(), indices.end(), 0);
-        std::nth_element(indices.begin(), indices.begin() + n, indices.end(),
-                         [&minZRoofSurfaces](int i1, int i2) { return minZRoofSurfaces[i1] < minZRoofSurfaces[i2]; });
-        std::sort(indices.begin(), indices.begin() + n, std::greater<>()); // Sort the first n indices in descending order for safe removal
-
-        // remove elements from vectors using the identified indices
-        for (int i = 0; i < n; ++i) {
-            int idxToRemove = indices[i];
-            surfaceAreasRoofSurfaces.erase(surfaceAreasRoofSurfaces.begin() + idxToRemove);
-            maxZRoofSurfaces.erase(maxZRoofSurfaces.begin() + idxToRemove);
-            minZRoofSurfaces.erase(minZRoofSurfaces.begin() + idxToRemove);
-        }
-
-        // calculate ridge, eave and lod1.2 z-value
-        double ridge = calculateRidge(surfaceAreasRoofSurfaces, maxZRoofSurfaces);
-        double eave = calculateEave(surfaceAreasRoofSurfaces, minZRoofSurfaces);
-        double lod12z = ((ridge - eave) * 0.7) + eave;
-
-        // construct LoD1.2
-        std::vector<std::vector<std::vector<int>>> extrudedGroundSurfaceBoundaries = extrudeGroundSurface(j, groundSurfaceBoundaries, lod12z);
-
-        // extract wall boundaries
-        std::vector<std::vector<int>> wallBoundaries = constructWallBoundaries(groundSurfaceBoundaries, extrudedGroundSurfaceBoundaries);
-
-        // reverse roof for better view results in CityJSON Ninja
-        std::vector<std::vector<std::vector<int>>> reversedRoof = flipOrientation(extrudedGroundSurfaceBoundaries);
-
-        // create Solid
-        auto solid = createSolid(groundSurfaceBoundaries, reversedRoof, wallBoundaries);
-
-        // write lod 1.2 to file
-        json SolidLOD12 = {
-                {"type", "Solid"},
-                {"lod", "1.2"},
-                {"boundaries", solid}
-        };
-
-        co.value()["geometry"].push_back(SolidLOD12);
-
-        // reverse ground as well for better view in CityJSON Ninja
-        std::vector<std::vector<std::vector<int>>> reversedGround = flipOrientation(groundSurfaceBoundaries);
-
-        // write lod 0.2 to file
-        json MultiSurfaceLOD02 = {
-                {"type", "MultiSurface"},
-                {"lod", "0.2"},
-                {"boundaries", reversedGround}
-        };
-
-        co.value()["geometry"].push_back(MultiSurfaceLOD02);
     }
 
     //-- write to disk the modified city model (out.city.json)
