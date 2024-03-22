@@ -7,3 +7,4 @@ data/twobuildingsformatted.city.json
 src/origin.cpp
 *.json
 src/draft.cpp
+/cmake-build-release
